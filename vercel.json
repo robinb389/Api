@@ -1,0 +1,29 @@
+{
+    "version": 2,
+    "builds": [{"src": "server.js",    "use": "@vercel/node"}],
+    "routes": [{ "src": "/(.*)", "dest": "server.js" }]
+}
+
+
+[
+	{
+		"artist":"beatles",
+		"title": "Please Please Me",
+        "date": "1963-03-22"
+},
+{
+		"artist":"beatles",
+		"title": "Let It Be",
+        "date": "1970-05-08"
+},
+{
+		"artist": "pink floid",
+		"title": "Piper at the Gates of Dawn",
+        "date": " 1967-08-04"	
+},
+{
+		"artist": "pink floid",
+		"title": "The Wall",
+        "date": "1974-11-30"	
+}
+]

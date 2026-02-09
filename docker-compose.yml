@@ -1,0 +1,10 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3021:3021"
+    env_file:
+      - .env
+    volumes:
+      - .:/usr/src/app
+      - /usr/src/app/node_modules
