@@ -1,5 +1,6 @@
 import express from "express";
 import mongoose from "mongoose";
+import serverless from "serverless-http";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -8,15 +9,17 @@ const app = express();
 app.use(express.json());
 
 // --------------------
-// Connect to MongoDB
+// MongoDB connection (cached for Vercel)
 // --------------------
-mongoose
-  .connect(process.env.MONGO_URI)
-  .then(() => console.log(`MongoDB connected to DB: ${mongoose.connection.name}`))
-  .catch((err) => {
-    console.error("Mongo connection error:", err);
-    process.exit(1);
-  });
+let isConnected = false;
+
+async function connectDB() {
+  if (isConnected) return;
+
+  await mongoose.connect(process.env.MONGO_URI);
+  isConnected = true;
+  console.log("MongoDB connected");
+}
 
 // --------------------
 // Schema + Model
@@ -26,166 +29,110 @@ const userSchema = new mongoose.Schema(
     name: { type: String, required: true },
     surname: { type: String, required: true },
     phone: { type: String, required: true },
-    email: { type: String, required: true },
-    createdAt: { type: Date, default: Date.now },
+    email: { type: String, required: true, unique: true },
+    createdAt: { type: Date, default: Date.now }
   },
-  { collection: "contactes", versionKey: false }
+  {
+    collection: "contactes",
+    versionKey: false
+  }
 );
 
-// Indexes
-userSchema.index({ email: 1 }, { unique: true });
-userSchema.index({ createdAt: 1 });
-userSchema.index({ surname: 1, name: 1 });
-
-const User = mongoose.model("User", userSchema);
+const User = mongoose.models.User || mongoose.model("User", userSchema);
 
 // --------------------
-// CRUD Routes
+// Routes
 // --------------------
 
-// List all users
+// Health check
+app.get("/", async (req, res) => {
+  await connectDB();
+  res.send("API is running 🚀");
+});
+
+// List all
 app.get("/list", async (req, res) => {
-  try {
-    const users = await User.find();
-    res.json(users);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  await connectDB();
+  const users = await User.find();
+  res.json(users);
 });
 
-// List users by date range
-// Example: /listrange?start=YYYY-MM-DD&end=YYYY-MM-DD
-app.get("/listrange", async (req, res) => {
-  try {
-    const { start, end } = req.query;
-    if (!start || !end) return res.status(400).send("Missing start or end date");
-
-    const users = await User.find({
-      createdAt: { $gte: new Date(start), $lte: new Date(end) },
-    });
-    res.json(users);
-  } catch (err) {
-    res.status(400).send(err.message);
-  }
-});
-
-// --------------------
-// Add user
-// --------------------
-
-// Browser-friendly GET
-// Example: /add?name=Laura&surname=Martinez&phone=600111003&email=laura@mail.com
-app.get("/add", async (req, res) => {
-  try {
-    const { name, surname, phone, email } = req.query;
-    if (!name || !surname || !phone || !email) return res.status(400).send("Missing required fields");
-
-    const newUser = new User({ name, surname, phone, email });
-    await newUser.save();
-    res.send(`User added successfully: ${JSON.stringify(newUser)}`);
-  } catch (err) {
-    if (err.code === 11000) return res.status(400).send("Email already exists");
-    res.status(400).send(err.message);
-  }
-});
-
-// Postman-friendly POST
+// Add (Postman)
 app.post("/add", async (req, res) => {
+  await connectDB();
   try {
-    const { name, surname, phone, email } = req.body;
-    if (!name || !surname || !phone || !email) return res.status(400).json({ error: "Missing required fields" });
-
-    const newUser = new User({ name, surname, phone, email });
-    await newUser.save();
-    res.status(201).json(newUser);
+    const user = new User(req.body);
+    await user.save();
+    res.status(201).json(user);
   } catch (err) {
-    if (err.code === 11000) return res.status(400).json({ error: "Email already exists" });
+    if (err.code === 11000) {
+      return res.status(400).json({ error: "Email already exists" });
+    }
     res.status(400).json({ error: err.message });
   }
 });
 
-// --------------------
-// Update user
-// --------------------
-
-// Browser GET
-// Example: /update/ID?name=NewName&phone=600999888
-app.get("/update/:id", async (req, res) => {
+// Add (Browser)
+app.get("/add", async (req, res) => {
+  await connectDB();
   try {
-    const { id } = req.params;
-    const { name, surname, phone, email } = req.query;
-
-    const updatedUser = await User.findByIdAndUpdate(
-      id,
-      { name, surname, phone, email },
-      { new: true, runValidators: true }
-    );
-
-    if (!updatedUser) return res.status(404).send("User not found");
-
-    res.send(`User updated successfully: ${JSON.stringify(updatedUser)}`);
+    const user = new User(req.query);
+    await user.save();
+    res.json(user);
   } catch (err) {
-    if (err.code === 11000) return res.status(400).send("Email already exists");
     res.status(400).send(err.message);
   }
 });
 
-// Postman PUT
-// Example: PUT /update/ID with JSON body
+// Update (Postman)
 app.put("/update/:id", async (req, res) => {
+  await connectDB();
   try {
-    const { id } = req.params;
-    const { name, surname, phone, email } = req.body;
-
-    const updatedUser = await User.findByIdAndUpdate(
-      id,
-      { name, surname, phone, email },
+    const updated = await User.findByIdAndUpdate(
+      req.params.id,
+      req.body,
       { new: true, runValidators: true }
     );
-
-    if (!updatedUser) return res.status(404).json({ error: "User not found" });
-
-    res.json(updatedUser);
+    if (!updated) return res.status(404).json({ error: "User not found" });
+    res.json(updated);
   } catch (err) {
-    if (err.code === 11000) return res.status(400).json({ error: "Email already exists" });
     res.status(400).json({ error: err.message });
   }
 });
 
-// --------------------
-// Delete user
-// --------------------
-
-// Browser GET
-// Example: /delete/ID
-app.get("/delete/:id", async (req, res) => {
+// Update (Browser)
+app.get("/update/:id", async (req, res) => {
+  await connectDB();
   try {
-    const { id } = req.params;
-    const deletedUser = await User.findByIdAndDelete(id);
-    if (!deletedUser) return res.status(404).send("User not found");
-    res.send(`User deleted successfully: ${JSON.stringify(deletedUser)}`);
+    const updated = await User.findByIdAndUpdate(
+      req.params.id,
+      req.query,
+      { new: true }
+    );
+    if (!updated) return res.status(404).send("User not found");
+    res.json(updated);
   } catch (err) {
     res.status(400).send(err.message);
   }
 });
 
-// Postman DELETE
+// Delete
 app.delete("/delete/:id", async (req, res) => {
-  try {
-    const { id } = req.params;
-    const deletedUser = await User.findByIdAndDelete(id);
-    if (!deletedUser) return res.status(404).json({ error: "User not found" });
-    res.json({ message: "User deleted successfully", deletedUser });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
+  await connectDB();
+  const deleted = await User.findByIdAndDelete(req.params.id);
+  if (!deleted) return res.status(404).json({ error: "User not found" });
+  res.json({ message: "User deleted", deleted });
+});
+
+// Browser delete
+app.get("/delete/:id", async (req, res) => {
+  await connectDB();
+  const deleted = await User.findByIdAndDelete(req.params.id);
+  if (!deleted) return res.status(404).send("User not found");
+  res.json(deleted);
 });
 
 // --------------------
-// Start server
+// Export for Vercel
 // --------------------
-const PORT = process.env.PORT || 3021;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`API ready: http://localhost:${PORT}/list`);
-});
+export default serverless(app);
